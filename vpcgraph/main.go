@@ -44,7 +44,7 @@ type Subgraph struct {
 	Nodes    []string
 }
 
-func (self Subgraph) Print(depth int, out io.Writer) {
+func (self *Subgraph) Print(depth int, out io.Writer) {
 	prefix := Indent(depth)
 	fmt.Fprintf(out, "%ssubgraph cluster_%s {\n", prefix, self.Name)
 	prefix = Indent(depth + 1)
@@ -56,6 +56,11 @@ func (self Subgraph) Print(depth int, out io.Writer) {
 	for _, node := range self.Nodes {
 		fmt.Fprintf(out, "%s%s;\n", prefix, node)
 	}
+
+	for _, child := range self.Children {
+		child.Print(depth+1, out)
+	}
+
 	prefix = Indent(depth)
 	fmt.Fprintf(out, "%s}\n", prefix)
 }
@@ -88,6 +93,12 @@ func Indent(depth int) string {
 }
 
 func main() {
+	node := 0
+	Node := func() string {
+		node = node + 1
+		return fmt.Sprintf("%d", node)
+	}
+
 	fmt.Println("Running")
 	svc := ec2.New(&aws.Config{Region: aws.String("us-west-2")})
 	fmt.Println("Created EC@ Client")
@@ -114,13 +125,33 @@ func main() {
 		Name: "DiagramName",
 	}
 
-	subnet := Subgraph{
+	vpcGraph := Subgraph{
 		Name:  vpcName,
 		Label: fmt.Sprintf("%s: %s", vpcName, DotSafe(*vpc.CidrBlock)),
-		Nodes: []string{"_"},
+		Nodes: []string{Node()},
 	}
 
-	graph.Children = append(graph.Children, subnet)
+	graph.Children = append(graph.Children, &vpcGraph)
+
+	subnets, err := svc.DescribeSubnets(&ec2.DescribeSubnetsInput{
+		Filters: []*ec2.Filter{
+			&ec2.Filter{
+				Name:   aws.String("vpc-id"),
+				Values: []*string{vpc.VpcId},
+			},
+		},
+	})
+	fmt.Println(subnets)
+
+	for _, subnet := range subnets.Subnets {
+		name := FindNameTag(subnet.Tags)
+		subnetGraph := Subgraph{
+			Name:  name,
+			Label: fmt.Sprintf("%s: %s", name, DotSafe(*vpc.CidrBlock)),
+			Nodes: []string{Node()},
+		}
+		vpcGraph.Children = append(vpcGraph.Children, &subnetGraph)
+	}
 
 	graph.Print(0, file)
 
